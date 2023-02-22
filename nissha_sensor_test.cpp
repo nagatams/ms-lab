@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -8,58 +9,76 @@
 #include <termios.h>
 #include <unistd.h>
 
-#define SERIAL_PORT "/dev/ttyUSB0"
+#define SERIAL_PORT_A "/dev/ttyUSB0"
+#define SERIAL_PORT_B "/dev/ttyUSB1"
+#define SERIAL_PORT_C "/dev/ttyUSB2"
+#define SERIAL_PORT_D "/dev/ttyUSB3"
+#define BAUDRATE B115200 // ボーレート
+//#define MC 439
+
+void serial_init(int* fd)
+{
+    printf("[serial_init]: start initialize at %d!\n", *fd);
+
+    struct termios oldtio, newtio;          // シリアル通信設定
+
+    // 初期設定
+    tcgetattr(*fd, &oldtio);                // 現在のシリアルポート設定を退避  
+    bzero(&newtio, sizeof(newtio));         // 新しいポートの設定の構造体をクリア
+    newtio.c_cflag = BAUDRATE | CS8 | CLOCAL | CREAD;  // データビット：8bit, ローカルライン（モデム制御なし）, 受信有効
+    //newtio.c_iflag = IGNPAR;                // バリティエラーの文字は無視
+    newtio.c_oflag = 0;                     // rawモード
+    newtio.c_lflag = 0;                     // 非カノニカル入力
+    newtio.c_cc[VTIME] = 1;                 // 0: キャラクタ間タイマは未使用
+    newtio.c_cc[VMIN] = 1;                 // MC文字受け取るまでブロック
+
+    tcflush(*fd, TCIFLUSH);                 // ポートのクリア
+    tcsetattr(*fd, TCSANOW, &newtio);       // ポートの設定を有効にする
+}
 
 void serial_send(int fd)
 {
-    printf("[serial_send]: start sending!\n");
+    printf("[serial_send]: start sending at %d!\n", fd);
 
     // 送信用
     int err;
-    char send[1];
+    /*
+    unsigned char send[] = {0x03,0x03,0xE8,0x07,0xD0,0x02,0x03,0x14,0x32,0x00,0x64,
+                   0x45,0xBB,0x80,0x00,0x45,0x3B,0x80,0x00,0x44,0xFA,0x00,0x00};
+    err = write(fd, send, 23);
+    */
 
-    for(int i = 0; i < 23; i++){
-        send[0] = '\0';
-        switch(i){
-            case 0: sprintf(send, "\x03"); break;
-            case 1: sprintf(send, "\x03"); break;
-            case 2: sprintf(send, "\xE8"); break;
-            case 3: sprintf(send, "\x07"); break;
-            case 4: sprintf(send, "\xD0"); break;
-            case 5: sprintf(send, "\x02"); break;
-            case 6: sprintf(send, "\x23"); break;
-            case 7: sprintf(send, "\x14"); break;
-            case 8: sprintf(send, "\x32"); break;
-            case 9: sprintf(send, "\x00"); break;
-            case 10: sprintf(send, "\x64"); break;
-            case 11: sprintf(send, "\x45"); break;
-            case 12: sprintf(send, "\xBB"); break;
-            case 13: sprintf(send, "\x80"); break;
-            case 14: sprintf(send, "\x00"); break;
-            case 15: sprintf(send, "\x45"); break;
-            case 16: sprintf(send, "\x3B"); break;
-            case 17: sprintf(send, "\x80"); break;
-            case 18: sprintf(send, "\x00"); break;
-            case 19: sprintf(send, "\x44"); break;
-            case 20: sprintf(send, "\xFA"); break;
-            case 21: sprintf(send, "\x00"); break;
-            case 22: sprintf(send, "\x00"); break;
-        }
-        err = write(fd, send, 1);
-        if (err < 0){
-            printf("write error\n");
-            exit(1);
-        }
-        printf("%d(size: %d):  %x\n", i, sizeof(send[i]), send[0]);
-    }
+   // 送信データ
+    char command = 0x03;
+    uint16_t tconv1 = 1000;
+    uint16_t tconv2 = 2000;
+    char rsv1 = 0x02;
+    char rsv2 = 0x03;
+    uint8_t trashmm = 20;
+    uint8_t nrepeat = 50;
+    uint16_t sps = 300;
+    float kx = 6000.0f;
+    float ky = 3000.0f;
+    float kz = 2000.0f;
+
+    write(fd, &command, 1);
+    write(fd, &tconv1, 2);
+    write(fd, &tconv2, 2);
+    write(fd, &rsv1, 1);
+    write(fd, &rsv2, 1);
+    write(fd, &trashmm, 1);
+    write(fd, &nrepeat, 1);
+    write(fd, &sps, 2);
+    write(fd, &kx, 4);
+    write(fd, &ky, 4);
+    write(fd, &kz, 4);
 
     printf("[serial_send]: finish sending!\n");
-    //sprintf(send, "\x03\x03\xE8\x07\xD0\x02\x23\x14\x32\x00\x64\x45\xBB\x80\x00\x45\x3B\x80\x00\x44\xFA\x00\x00");
-}
+   }
 
 void serial_receive(int fd)
 {
-    printf("[serial_receive]: start recieving!\n");
+    printf("[serial_receive]: start recieving at %d!\n", fd);
 
     // 受信用
     int len;
@@ -67,6 +86,7 @@ void serial_receive(int fd)
 
     // デバイスからの受信
     len = read(fd, resv, sizeof(resv));
+    printf("[serial_receive]: len = %d\n", len);
     if(len==0){
         // read()が0を返したら、end of file
         // 通常は正常終了するのだが今回は無限ループ
@@ -90,42 +110,62 @@ int main(int argc, char *argv[])
 {
     // 変数宣言
     unsigned char msg[256] = "serial port open...\n";
-    int fd;                             // ファイルディスクリプタ
-    struct termios tio;                 // シリアル通信設定
-    int baudRate = B9600;
+    int fd_a, fd_b, fd_c, fd_d;               // ファイルディスクリプタ, COM_A〜Cに対応
     int len;
     int err;
     int size;
 
     // デバイスのオープン
-    fd = open(SERIAL_PORT, O_RDWR);
-    if (fd < 0){
-        //perror(argv[1]);
+    fd_a = open(SERIAL_PORT_A, O_RDWR);
+    if (fd_a < 0){
+        printf("open error\n");
+        return -1;
+    }
+    fd_b = open(SERIAL_PORT_B, O_RDWR);
+    if (fd_b < 0){
+        printf("open error\n");
+        return -1;
+    }
+    fd_c = open(SERIAL_PORT_C, O_RDWR);
+    if (fd_c < 0){
+        printf("open error\n");
+        return -1;
+    }
+    fd_d = open(SERIAL_PORT_D, O_RDWR);
+    if (fd_d < 0){
         printf("open error\n");
         return -1;
     }
 
-    // 初期設定
-    memset(&tio, 0, sizeof(tio));        // 初期化
-    tio.c_cflag = CS8 | CLOCAL | CREAD;  // データビット：8bit, ローカルライン（モデム制御なし）, 受信有効
-    cfsetispeed(&tio, baudRate);         // 入力ボーレート設定
-    cfsetospeed(&tio, baudRate);         // 出力ボーレート設定
-    cfmakeraw(&tio);                     // RAWモード
-    tcsetattr(fd, TCSANOW, &tio);        // デバイスに設定を行う
-    ioctl(fd, TCSETS, &tio);             // ポートの設定を有効にする
+    /*
+    int fd_test;
+    fd_test = open("text.txt", O_RDWR | O_TRUNC);
+    */
 
+    // デバイスの初期化
+    serial_init(&fd_a);
+    serial_init(&fd_b);
+    serial_init(&fd_c);
+    serial_init(&fd_d);
+    
     //printf("check1\n");
  
     // デバイスへの送信   
-    serial_send(fd);
+    serial_send(fd_a);
 
     sleep(3);                             // readの前に待機
 
     // デバイスからの受信
-    serial_receive(fd);
+    serial_receive(fd_a);
+    //serial_receive(fd_b);
+    //serial_receive(fd_c);
+    serial_receive(fd_d);
 
     // デバイスのクローズ
-    close(fd);
+    close(fd_a);
+    close(fd_b);
+    close(fd_c);
+    close(fd_d);
 
     return 0;
 }
